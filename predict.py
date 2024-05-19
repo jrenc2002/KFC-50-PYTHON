@@ -1,6 +1,7 @@
 import argparse
 import logging
 import os
+from glob import glob
 
 import numpy as np
 import torch
@@ -11,6 +12,7 @@ from torchvision import transforms
 from utils.data_loading import BasicDataset
 from unet import UNet
 from utils.utils import plot_img_and_mask
+
 
 def predict_img(net,
                 full_img,
@@ -37,8 +39,10 @@ def get_args():
     parser = argparse.ArgumentParser(description='Predict masks from input images')
     parser.add_argument('--model', '-m', default='MODEL.pth', metavar='FILE',
                         help='Specify the file in which the model is stored')
-    parser.add_argument('--input', '-i', metavar='INPUT', nargs='+', help='Filenames of input images', required=True)
-    parser.add_argument('--output', '-o', metavar='OUTPUT', nargs='+', help='Filenames of output images')
+    parser.add_argument('--input', '-i', metavar='INPUT', required=True,
+                        help='Directory of input images')
+    parser.add_argument('--output', '-o', metavar='OUTPUT', required=True,
+                        help='Directory for output images')
     parser.add_argument('--viz', '-v', action='store_true',
                         help='Visualize the images as they are processed')
     parser.add_argument('--no-save', '-n', action='store_true', help='Do not save the output masks')
@@ -48,15 +52,16 @@ def get_args():
                         help='Scale factor for the input images')
     parser.add_argument('--bilinear', action='store_true', default=False, help='Use bilinear upsampling')
     parser.add_argument('--classes', '-c', type=int, default=2, help='Number of classes')
-    
+
     return parser.parse_args()
 
 
-def get_output_filenames(args):
-    def _generate_name(fn):
-        return f'{os.path.splitext(fn)[0]}_OUT.png'
+def get_output_filenames(input_dir, output_dir):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
-    return args.output or list(map(_generate_name, args.input))
+    input_files = glob(os.path.join(input_dir, '*'))
+    return [os.path.join(output_dir, os.path.basename(f)) for f in input_files]
 
 
 def mask_to_image(mask: np.ndarray, mask_values):
@@ -65,7 +70,7 @@ def mask_to_image(mask: np.ndarray, mask_values):
     elif mask_values == [0, 1]:
         out = np.zeros((mask.shape[-2], mask.shape[-1]), dtype=bool)
     else:
-        out = np.zeros((mask.shape[-2], mask.shape[-1]), dtype=np.uint8)
+        out = np.zeros((mask.shape[-2], mask[-1]), dtype=np.uint8)
 
     if mask.ndim == 3:
         mask = np.argmax(mask, axis=0)
@@ -80,8 +85,11 @@ if __name__ == '__main__':
     args = get_args()
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
-    in_files = args.input
-    out_files = get_output_filenames(args)
+    in_dir = args.input
+    out_dir = args.output
+
+    in_files = glob(os.path.join(in_dir, '*'))
+    out_files = get_output_filenames(in_dir, out_dir)
 
     net = UNet(n_channels=3, n_classes=args.classes, bilinear=args.bilinear)
 
@@ -96,9 +104,9 @@ if __name__ == '__main__':
 
     logging.info('Model loaded!')
 
-    for i, filename in enumerate(in_files):
-        logging.info(f'Predicting image {filename} ...')
-        img = Image.open(filename)
+    for in_file, out_file in zip(in_files, out_files):
+        logging.info(f'Predicting image {in_file} ...')
+        img = Image.open(in_file)
 
         mask = predict_img(net=net,
                            full_img=img,
@@ -107,11 +115,14 @@ if __name__ == '__main__':
                            device=device)
 
         if not args.no_save:
-            out_filename = out_files[i]
             result = mask_to_image(mask, mask_values)
-            result.save(out_filename)
-            logging.info(f'Mask saved to {out_filename}')
+            result.save(out_file)
+            logging.info(f'Mask saved to {out_file}')
 
         if args.viz:
-            logging.info(f'Visualizing results for image {filename}, close to continue...')
+            logging.info(f'Visualizing results for image {in_file}, close to continue...')
             plot_img_and_mask(img, mask)
+
+
+# python predict.py --model path/to/MODEL.pth --input path/to/input_directory --output path/to/output_directory
+# python predict.py --model MODEL.pth --input ./input_images --output ./output_masks
